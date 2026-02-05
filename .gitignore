@@ -1,0 +1,10 @@
+# Datafiles
+*.nc
+*.csv
+
+# Results files
+*.mp4
+*.png
+
+# Julia project files
+Manifest*.toml
