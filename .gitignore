@@ -1,10 +1,20 @@
 # Datafiles
 *.nc
 *.csv
+*.zip
+*.dbf
+*.prj
+*.shp
+*.shx
+
+# Data download file
+download_sentinel.jl
+
 
 # Results files
 *.mp4
 *.png
+*.gif
 
 # Julia project files
 Manifest*.toml
