@@ -10,6 +10,9 @@
 # Data download file
 download_sentinel.jl
 
+# Notes directory
+notes/
+
 
 # Results files
 *.mp4
