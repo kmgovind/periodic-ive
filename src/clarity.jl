@@ -47,7 +47,8 @@ function calculate_target_weights(measurements_buffer, pos_buffer, s_vec, npts; 
         s_meas = measurements_buffer[closest_idx]
         
         # Apply custom weighting function
-        new_weights[i] = weight_ge30(s_meas)
+        # new_weights[i] = weight_ge30(s_meas)
+        new_weights[i] = weight_exp(s_meas)
     end
     
     # --- CRITICAL SOLVER STEP: Normalization ---
@@ -55,6 +56,9 @@ function calculate_target_weights(measurements_buffer, pos_buffer, s_vec, npts; 
     if avg_weight > 1e-6 
         new_weights ./= avg_weight
     end
+
+    # Ensure all weights are between 0 and 1
+    new_weights = clamp.(new_weights, 0.01, 1.0)
     
     return new_weights
 end
