@@ -27,74 +27,66 @@ function optimize_lap_speeds_full_spatiotemporal(weights, q_initial, N, ds, P_in
         end
     end
     
-    safe_u_min = max(0.1, vehicle_params.u_min) 
+    # --- PHYSICAL SPEED BOUNDS ---
+    # Prevents 1/u derivative explosion while staying strictly positive u > 0
+    safe_u_min = max(0.5, vehicle_params.u_min) # Steerage limit
+    safe_u_max = 5.0 # Give Ipopt a bounded search space
     
-    # --- THE FIX: SOLVE FOR u ONLY ---
-    @variable(model, u[1:N] >= safe_u_min, start = 1.75)
+    @variable(model, safe_u_min <= u[1:N] <= safe_u_max, start = 1.75)
     
-    # Dynamically calculate time expressions. 
-    # Because u >= 0.1, this will NEVER divide by zero!
-    # This deletes 200 variables and 200 nonlinear equality constraints.
     @NLexpression(model, dt[k=1:N], ds / u[k])
     @NLexpression(model, T_lap, sum(dt[k] for k in 1:N))
     
-    @variable(model, 0 <= q[1:N, 1:N+1] <= 1.0, start=0.5)
-    # @variable(model, q[1:N, 1:N+1] >= 0.0, start=0.5)  # Only enforce non-negativity, let the dynamics handle the upper bound
+    # @variable(model, 0 <= q[1:N, 1:N+1] <= 1.0, start=0.5)
+    # Let the nonlinear dynamics handle the upper limit naturally
+    @variable(model, q[1:N, 1:N+1] >= 0.0, start=0.5)
     @variable(model, node_clarity[1:N] >= 0)
     
+    # --- FIXED TIME INTEGRAL ---
+    # Removed '* ds' to properly calculate ∫ q(t) dt
     for j in 1:N
         @NLconstraint(model, 
-            node_clarity[j] == sum( 0.5 * (q[j, k] + q[j, k+1]) * dt[k] * ds for k in 1:N )
+            node_clarity[j] == sum( 0.5 * (q[j, k] + q[j, k+1]) * dt[k] for k in 1:N )
         )
     end
     
-    # Delete J_avg variable and constraint entirely. Put it straight in the objective!
+    # Objective exactly matches Eq (2a)
     @NLobjective(model, Max, sum(weights[j] * node_clarity[j] for j in 1:N) / T_lap)
     
-    # Scaled Energy constraint (Megajoules)
+    # Energy Constraint exactly matches Eq (2e), scaled by 1e6 for numerical stability
     scale_factor = 1e6
     @NLconstraint(model, 
         sum( (vehicle_params.kh * dt[k] + vehicle_params.km * (u[k]^2) * ds) / scale_factor for k in 1:N) <= (P_in_W_avg * T_lap) / scale_factor
     )
     
-    # for k in 1:N
-    #     k_next = (k == N) ? 1 : k + 1 
-    #     for j in 1:N
-    #         S_k = S_matrix[j, k]
-    #         S_k_next = S_matrix[j, k_next]
-            
-    #         if S_k == 0.0 && S_k_next == 0.0
-    #             @NLconstraint(model, 
-    #                 q[j, k+1] == q[j, k] - 0.5 * dt[k] * alpha_decay * (q[j, k]^2 + q[j, k+1]^2)
-    #             )
-    #         else
-    #             @NLconstraint(model, 
-    #                 q[j, k+1] == q[j, k] + 0.5 * dt[k] * (
-    #                     (S_k * (1 - q[j, k])^2 - alpha_decay * q[j, k]^2) + 
-    #                     (S_k_next * (1 - q[j, k+1])^2 - alpha_decay * q[j, k+1]^2)
-    #                 )
-    #             )
-    #         end
-    #     end
-    # end
-
+    # --- EXACT NONLINEAR DYNAMICS (Eq 2c) ---
+    # Restored trapezoidal collocation to match S*(1-q)^2 - alpha*q^2
     for k in 1:N
+        k_next = (k == N) ? 1 : k + 1 
         for j in 1:N
             S_k = S_matrix[j, k]
-            K = S_k + alpha_decay
+            S_k_next = S_matrix[j, k_next]
             
-            # The exact analytical solution to the clarity ODE
-            @NLconstraint(model, 
-                q[j, k+1] == (S_k / K) + (q[j, k] - (S_k / K)) * exp(-K * dt[k])
-            )
+            if S_k == 0.0 && S_k_next == 0.0
+                @NLconstraint(model, 
+                    q[j, k+1] == q[j, k] - 0.5 * dt[k] * alpha_decay * (q[j, k]^2 + q[j, k+1]^2)
+                )
+            else
+                @NLconstraint(model, 
+                    q[j, k+1] == q[j, k] + 0.5 * dt[k] * (
+                        (S_k * (1 - q[j, k])^2 - alpha_decay * q[j, k]^2) + 
+                        (S_k_next * (1 - q[j, k+1])^2 - alpha_decay * q[j, k+1]^2)
+                    )
+                )
+            end
         end
     end
     
-    # @constraint(model, [j=1:N], q[j, 1] == q[j, N+1])
-    # REMOVED: @constraint(model, [j=1:N], q[j, 1] == q[j, N+1])
-    
-    # NEW: Pin the start of the lap to the actual current map state
-    @constraint(model, [j=1:N], q[j, 1] == q_initial[j])
+    # REMOVE THIS (Paradigm 2 / MPC):
+    # @constraint(model, [j=1:N], q[j, 1] == q_initial[j])
+
+    # ADD THIS (Paradigm 1 / Steady-State Periodic Orbit):
+    @constraint(model, [j=1:N], q[j, 1] == q[j, N+1])
     
     optimize!(model)
     

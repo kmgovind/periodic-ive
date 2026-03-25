@@ -17,9 +17,11 @@ end
 
 
 function run_cb_sim()
-    # Initialize ASV geometry and simulate path discretization
+    # ==============================================================================
+    # 1. INITIALIZATION & SETUP
+    # ==============================================================================
     u_nominal = 1.75  # m/s
-    vehicle_params = VehicleParams(u_nominal, 24*3600.0)  # 24 hours at 1.75 m/s nominal speed
+    vehicle_params = VehicleParams(u_nominal, 24*3600.0)
 
     npts = 200
     lon_path, lat_path, s_vec = discretize_polyline(transect_lon_shifted, transect_lat_shifted, npts)
@@ -30,29 +32,25 @@ function run_cb_sim()
     mean_lat_rad = deg2rad(mean(lat_path))
     cos_mean_lat = cos(mean_lat_rad)
 
-    # X and Y coordinates in meters
     X_path = deg2rad.(lon_path) .* (R_earth * cos_mean_lat)
     Y_path = deg2rad.(lat_path) .* R_earth
 
-
     # Simulation parameters
     dt_step_sec = 60.0              # 1 minute per step
-    sigma_val = 3000.0              # Sensing footprint [m]
-    alpha_val = 0.05                # Clarity decay
-
-    # EXACT power mapping: No artificial surplus
+    sigma_val = 300.0              # Sensing footprint [m]
+    alpha_val = 0.001                # Clarity decay
     power_nominal = vehicle_params.kh + vehicle_params.km * (u_nominal^3)
     P_in_W = power_nominal          # Continuous Solar Power Generation [Watts]
 
     # Path Discretization for JuMP
-    N_segments = npts - 1               # Number of path segments
-    ds = path_length_m / N_segments     # Length of each segment [m]
+    N_segments = npts - 1
+    ds = path_length_m / N_segments
 
-    # Generate times (assuming frames are 1 hour apart, step every minute)
+    # Generate times 
     sim_times = collect(frames[1].dt : Minute(1) : frames[end].dt)
     N_steps = length(sim_times)
 
-    # Initial clarity state
+    # Initial clarity state (The physical transient starts at 0)
     clarity_state = zeros(Float64, npts)
 
     # History Arrays
@@ -76,17 +74,23 @@ function run_cb_sim()
     frame_times = [fr.dt for fr in frames]
     frame_idx_for_time(t) = argmin(abs.(Dates.value.(frame_times .- t)))
 
-
-    # Run Initial Optimization for Lap 1 (Uniform weights)
+    # ==============================================================================
+    # 2. LAP 1 OFFLINE OPTIMIZATION (Paradigm 1)
+    # ==============================================================================
     current_weights = fill(1.0, npts)
+    q_initial = fill(0.0, npts)  # Initial clarity guess for optimization
     opt_time_start = time()
-    u_opt_segments = optimize_lap_speeds_full_spatiotemporal(current_weights, N_segments, ds, P_in_W, alpha_val, vehicle_params, sigma_val)
+    
+    # Notice: We do NOT pass clarity_state. The solver just finds the periodic orbit!
+    u_opt_segments = optimize_lap_speeds_full_spatiotemporal(
+        current_weights, q_initial, N_segments, ds, P_in_W, alpha_val, vehicle_params, sigma_val
+    )
+    
     opt_time_elapsed = time() - opt_time_start
     println("Initial optimization completed in $(round(opt_time_elapsed, digits=2)) seconds")
 
-
     # ==============================================================================
-    # 4. MAIN SIMULATION LOOP
+    # 3. MAIN SIMULATION LOOP
     # ==============================================================================
     println("Starting Optimized Variable-Speed Simulation Loop...")
 
@@ -96,11 +100,17 @@ function run_cb_sim()
         current_lap = floor(Int, s_robot_total / path_length_m) + 1
         s_mod = mod(s_robot_total, path_length_m) 
         
-        # --- B. LAP TRANSITION LOGIC ---
+        # --- B. LAP TRANSITION LOGIC (Adaptive Paradigm 1) ---
         if current_lap > previous_lap
+            # 1. Update weights based on collected lap data
             current_weights = calculate_target_weights(lap_sal_buffer, lap_pos_buffer, s_vec, npts)
-            u_opt_segments = optimize_lap_speeds_full_spatiotemporal(current_weights, N_segments, ds, P_in_W, alpha_val, vehicle_params, sigma_val)
+
+            # 2. Re-solve for the NEW infinite-horizon limit cycle
+            u_opt_segments = optimize_lap_speeds_full_spatiotemporal(
+                current_weights, q_initial, N_segments, ds, P_in_W, alpha_val, vehicle_params, sigma_val
+            )
             
+            # 3. Clear buffers for the next lap
             empty!(lap_sal_buffer)
             empty!(lap_pos_buffer)
             
@@ -119,6 +129,8 @@ function run_cb_sim()
         # =====================================================================
         # --- D. HIGH-RESOLUTION PHYSICS SWEEP ---
         # =====================================================================
+        # Even though the optimizer assumes periodic steady-state, our physics 
+        # engine rigidly simulates the continuous transient behavior!
         inner_dt = 0.25 
         t_inner = 0.0
         path_length_true = s_vec[end]
@@ -161,8 +173,6 @@ function run_cb_sim()
 
     return clarity_history, speed_hist, lap_hist, lon_hist, lat_hist, salinity_meas_hist, weights_history
 end
-
-
 ################### Transect Definition #######################################################################################
 ### Load salinity data
 frames = discover_files("./datafiles")
@@ -176,7 +186,7 @@ try
     clarity_history, speed_hist, lap_hist, lon_hist, lat_hist, salinity_meas_hist, weights_history = run_cb_sim()
 
     # Save results to JLD2 file for later analysis
-    filename = datestr(now(), dateformat"yyyy-mm-dd_HHMMSS") * "_cb_sim_results.jld2"
+    filename = Dates.format(now(), "yyyy-mm-dd_HHMMSS") * "_cb_sim_results.jld2"
     @save filename clarity_history speed_hist lap_hist lon_hist lat_hist salinity_meas_hist weights_history
     println("Simulation results saved to ", filename)
 

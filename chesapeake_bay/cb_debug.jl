@@ -27,7 +27,7 @@ roi = (lat_valid .>= lat_min) .& (lat_valid .<= lat_max)
 u_nominal = 1.75  # m/s
 vehicle_params = VehicleParams(u_nominal, 24*3600.0)  # 24 hours at 1.75 m/s nominal speed
 
-npts = 50
+npts = 200
 lon_path, lat_path, s_vec = discretize_polyline(transect_lon_shifted, transect_lat_shifted, npts)
 path_length_m = s_vec[end]
 
