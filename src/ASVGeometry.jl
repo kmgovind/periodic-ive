@@ -7,14 +7,14 @@ export VehicleParams, SimParams
 export transect_lon_shifted, transect_lat_shifted, lat_min, lat_max
 
 Base.@kwdef struct VehicleParams
-    u_min::Float64 = 0.75
+    u_min::Float64 = 0.25
     u_max::Float64 = 2.5
     kh::Float64 = 10.0
     km::Float64 = 83.0
     E_budget::Float64 = 0.0
 end
 
-function VehicleParams(u_nominal::Float64, duration_sec::Float64; u_min::Float64=0.00, u_max::Float64=2.5, kh::Float64=10.0, km::Float64=83.0)
+function VehicleParams(u_nominal::Float64, duration_sec::Float64; u_min::Float64=0.25, u_max::Float64=2.5, kh::Float64=10.0, km::Float64=83.0)
     # Energy = Power * Time; Power = kh + km * u^3
     # For constant speed u_nominal over duration_sec, compute energy budget in Wh
     E_budget = (kh + km * u_nominal^3) * duration_sec / 3600.0  # Convert Ws to Wh

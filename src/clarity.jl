@@ -6,15 +6,21 @@ function clarity_dynamics(qj, Sj; alpha = 0.05)
     return Sj * (1.0 - qj)^2 - alpha * qj^2
 end
 
-# Now accepts true physical distance rather than a generic vector norm
+# Now accepts true physical squared distance to skip the sqrt() step
 # Matches Equation 3:
-function sensing_function(distance_meters; S_0 = 1.0, sigma = 1000.0)
-    return S_0 * exp(-(distance_meters^2) / (2 * sigma^2))
+function sensing_function(dist_squared_meters; S_0 = 1.0, sigma = 1000.0)
+    return S_0 * exp(-dist_squared_meters / (2 * sigma^2))
 end
 
 # Upgraded ODE Integrator (Runge-Kutta 4th Order)
 # Provides smooth, accurate integration without needing clamp() hacks
 function update_clarity_rk4(qj, Sj, dt; alpha = 0.05)
+
+    # FAST PATH: If the robot is too far away to see this point, just decay it exactly
+    if Sj < 1e-4
+        return qj * exp(-alpha * dt)
+    end
+    
     k1 = clarity_dynamics(qj, Sj; alpha=alpha)
     k2 = clarity_dynamics(qj + 0.5 * dt * k1, Sj; alpha=alpha)
     k3 = clarity_dynamics(qj + 0.5 * dt * k2, Sj; alpha=alpha)
@@ -26,7 +32,7 @@ function update_clarity_rk4(qj, Sj, dt; alpha = 0.05)
     return clamp(q_new, 0.0, 1.0) 
 end
 
-function calculate_target_weights(measurements_buffer, pos_buffer, s_vec, npts; rated_salinity=30.0, sigma_weight=3.0)
+function calculate_target_weights(measurements_buffer, pos_buffer, s_vec, npts; rated_salinity=30.0, sigma_weight=1.5)
 
     # Gaussian weight
     weight_exp(s, s_ref=rated_salinity, σ=sigma_weight) = exp(-((s - s_ref)^2) / (2σ^2))
@@ -47,18 +53,19 @@ function calculate_target_weights(measurements_buffer, pos_buffer, s_vec, npts; 
         s_meas = measurements_buffer[closest_idx]
         
         # Apply custom weighting function
-        # new_weights[i] = weight_ge30(s_meas)
-        new_weights[i] = weight_exp(s_meas)
+        new_weights[i] = weight_ge30(s_meas)
+        # new_weights[i] = weight_exp(s_meas)
     end
     
-    # --- CRITICAL SOLVER STEP: Normalization ---
-    avg_weight = sum(new_weights) / npts
-    if avg_weight > 1e-6 
-        new_weights ./= avg_weight
-    end
+    # # --- CRITICAL SOLVER STEP: Normalization ---
+    # avg_weight = sum(new_weights) / npts
+    # if avg_weight > 1e-6 
+    #     new_weights ./= avg_weight
+    # end
 
     # Ensure all weights are between 0 and 1
-    new_weights = clamp.(new_weights, 0.01, 1.0)
+    # new_weights = clamp.(new_weights, 0.01, 1.0)
+    new_weights = max.(new_weights, 0.01)  # Avoid zero weights that could cause solver issues
     
     return new_weights
 end
