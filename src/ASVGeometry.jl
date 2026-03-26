@@ -4,16 +4,17 @@ using LinearAlgebra, QuadGK
 
 export discretize_polyline, sample_salinity
 export VehicleParams, SimParams
+export transect_lon_shifted, transect_lat_shifted, lat_min, lat_max
 
 Base.@kwdef struct VehicleParams
-    u_min::Float64 = 0.75
+    u_min::Float64 = 0.25
     u_max::Float64 = 2.5
     kh::Float64 = 10.0
     km::Float64 = 83.0
     E_budget::Float64 = 0.0
 end
 
-function VehicleParams(u_nominal::Float64, duration_sec::Float64; u_min::Float64=0.00, u_max::Float64=2.5, kh::Float64=10.0, km::Float64=83.0)
+function VehicleParams(u_nominal::Float64, duration_sec::Float64; u_min::Float64=0.25, u_max::Float64=2.5, kh::Float64=10.0, km::Float64=83.0)
     # Energy = Power * Time; Power = kh + km * u^3
     # For constant speed u_nominal over duration_sec, compute energy budget in Wh
     E_budget = (kh + km * u_nominal^3) * duration_sec / 3600.0  # Convert Ws to Wh
@@ -74,5 +75,40 @@ function sample_salinity(lon_r, lat_r, lon_v, lat_v, salt_v)
     d2 = ((lon_v .- lon_r) .* m_per_deg_lon).^2 .+ ((lat_v .- lat_r) .* m_per_deg_lat).^2
     return salt_v[argmin(d2)]
 end
+
+
+# Transect definition for Chesapeake Bay
+# Start at the southeastern-most corner; southern return is offset by the same spacing (0.05°) as leg spacing
+transect_lon = [
+    -75.95, -75.95, -75.95,  # Start SE corner -> bottom of Leg 1 -> top of Leg 1
+    -76.00, -76.00,          # Across top -> down Leg 2
+    -76.05, -76.05,          # Across bottom -> up Leg 3
+    -76.10, -76.10,          # Across top -> down Leg 4
+    -76.15, -76.15,          # Across bottom -> up Leg 5
+    -76.20, -76.20, -76.20,  # Across top -> down Leg 6 -> drop to southern return
+    -75.95                   # Return east to close loop at start
+]
+
+t_lat_max = 37.05;
+t_lat_min = 36.90;
+t_lat_return = 36.875;  # Southern return line latitude
+
+transect_lat = [
+    t_lat_return, t_lat_min, t_lat_max,  # Start SE -> Leg 1 bottom -> Leg 1 top
+    t_lat_max, t_lat_min,         # Leg 2 top -> Leg 2 bottom
+    t_lat_min, t_lat_max,         # Leg 3 bottom -> Leg 3 top
+    t_lat_max, t_lat_min,         # Leg 4 top -> Leg 4 bottom
+    t_lat_min, t_lat_max,         # Leg 5 bottom -> Leg 5 top
+    t_lat_max, t_lat_min, t_lat_return,  # Leg 6 top -> Leg 6 bottom -> southern return line
+    t_lat_return                 # Close loop at SE start
+]
+
+# Shift path slightly west and north to avoid land overlap
+lon_shift = -0.065   # west
+lat_shift =  0.1  # north
+transect_lon_shifted = transect_lon .+ lon_shift
+transect_lat_shifted = transect_lat .+ lat_shift
+
+lat_min, lat_max = 36.75, 37.5
 
 end # module ASVGeometry
