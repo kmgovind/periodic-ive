@@ -18,6 +18,9 @@ bk_files/
 *.mp4
 *.png
 *.gif
+*.jld2
+*.pdf
+logs/
 
 # Julia project files
 Manifest*.toml

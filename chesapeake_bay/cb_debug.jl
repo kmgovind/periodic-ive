@@ -63,7 +63,7 @@ N_steps = length(sim_times)
 
 gaussian_weights(x, mu, sigma) = exp(-((x - mu) / sigma)^2)
 weights_x = range(0, 1, length=npts)
-current_weights = gaussian_weights.(weights_x, 0.5, 0.15)
+current_weights = 10 .* gaussian_weights.(weights_x, 0.5, 0.15)
 
 q_initial = fill(0.0, npts)  # Initial clarity guess for optimization
 
