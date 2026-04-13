@@ -205,3 +205,91 @@ end
 savefig(p_sigma_sweep, "$datetime_str/speed_vs_sigma.png")
 
 println("Sweep complete! Heatmaps and speed profiles saved.")
+
+
+# ==========================================
+# 6. Constant Speed Baseline Comparison
+# ==========================================
+println("\nStarting Constant Speed Baseline Evaluation...")
+
+# 1. Calculate the energy-limited constant speed
+const u_const = ((P_budget - kh) / km)^(1/3)
+println("Calculated Constant Speed Baseline: $(round(u_const, digits=3)) m/s")
+
+# 2. Forward simulation function for constant speed
+function evaluate_constant_speed(alpha, sigma; N_eval=100)
+    ds = L / N_eval
+    gamma_vals = [get_segment_S((i-1)*ds, i*ds) for i in 1:N_eval]
+    footprint_matrix = get_footprint_matrix(N_eval, L, sigma=sigma)
+    
+    q_curr = fill(0.5, N_eval)
+    q_next = zeros(N_eval)
+    
+    dt = ds / u_const
+    T_lap = L / u_const
+    
+    num_laps = 15 # Run enough laps to reach steady state
+    final_score = 0.0
+    
+    for lap in 1:num_laps
+        total_clarity = 0.0
+        for i in 1:N_eval
+            for j in 1:N_eval
+                S_sensor = 1.0 * footprint_matrix[i, j]
+                f(q_val) = S_sensor * (1 - q_val)^2 - alpha * q_val^2
+                
+                # RK4 Step
+                k1 = dt * f(q_curr[j])
+                k2 = dt * f(q_curr[j] + k1/2)
+                k3 = dt * f(q_curr[j] + k2/2)
+                k4 = dt * f(q_curr[j] + k3)
+                q_next[j] = q_curr[j] + (k1 + 2k2 + 2k3 + k4)/6
+                
+                if lap == num_laps
+                    total_clarity += 0.5 * gamma_vals[j] * (q_curr[j] + q_next[j]) * dt * ds
+                end
+            end
+            q_curr .= q_next
+        end
+        if lap == num_laps
+            final_score = total_clarity / T_lap
+        end
+    end
+    
+    return final_score
+end
+
+# 3. Evaluate the grid
+const_obj_matrix = zeros(num_a, num_s)
+improvement_matrix = zeros(num_a, num_s)
+
+for (i, a) in enumerate(alpha_vals)
+    for (j, s) in enumerate(sigma_vals)
+        base_obj = evaluate_constant_speed(a, s, N_eval=N_sweep)
+        const_obj_matrix[i, j] = base_obj
+        
+        # Calculate percentage improvement
+        opt_obj = obj_matrix[i, j]
+        improvement_matrix[i, j] = ((opt_obj - base_obj) / base_obj) * 100.0
+    end
+end
+
+# Save the new baseline data to the JLD2 file
+@save filepath alpha_vals sigma_vals obj_matrix time_matrix trajectories_dict const_obj_matrix improvement_matrix
+
+# 4. Plot the Percentage Improvement Heatmap
+p_imp = heatmap(string.(sigma_vals), string.(alpha_vals), improvement_matrix, 
+    xlabel="Sensing Radius (σ) [m]", ylabel="Decay Rate (α)", 
+    title="Optimal Controller Improvement (%)", color=:cividis,
+    right_margin=5Plots.mm)
+
+# Add text annotations on top of the heatmap blocks so the exact % is readable
+for i in 1:num_a
+    for j in 1:num_s
+        val = round(improvement_matrix[i, j], digits=1)
+        annotate!(p_imp, j, i, text("$(val)%", 10, :white, :center))
+    end
+end
+
+savefig(p_imp, "$datetime_str/sensitivity_improvement.png")
+println("Baseline evaluation complete! Improvement heatmap saved.")
