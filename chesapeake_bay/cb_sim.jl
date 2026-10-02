@@ -19,6 +19,14 @@ u_nominal = 1.75 # m/s
 dt_step_sec = 60.0 # seconds
 sigma_val = 1500.0 # sensing footprint in meters (Adjusted for large spatial runs!)
 alpha_val = 0.001 # clarity decay rate
+P_in_W_avg = 750.0 # W; matches the Chesapeake Bay paper setup
+
+# Target-map and traversal-refresh settings. Target weights are estimated from
+# measurements buffered over one completed lap, so max_lap_time_sec bounds how
+# long newly acquired measurements can wait before affecting the next plan.
+weight_sigma = 2.0 # PSU
+speed_floor = 0.00 # m/s; numerical guard only
+max_lap_time_sec = 24 * 3600.0 # 24 h; at least two target-map updates in a 5-day run
 
 # ==============================================================================
 # 1. OPTIMIZED VARIABLE-SPEED SIMULATION
@@ -37,7 +45,7 @@ function run_dynamic_opt_sim(frames)
     X_path = deg2rad.(lon_path) .* (R_earth * cos_mean_lat)
     Y_path = deg2rad.(lat_path) .* R_earth
 
-    P_in_W = vehicle_params.kh + vehicle_params.km * (u_nominal^3)
+    P_in_W = P_in_W_avg
     N_segments = npts - 1
     ds = path_length_m / N_segments
 
@@ -75,7 +83,8 @@ function run_dynamic_opt_sim(frames)
     
     println("Running Lap 1 Offline Optimization...")
     u_opt_segments = optimize_lap_speeds_full_spatiotemporal(
-        current_weights, q_initial, N_segments, ds, P_in_W, alpha_val, vehicle_params, sigma_val
+        current_weights, q_initial, N_segments, ds, P_in_W, alpha_val, vehicle_params, sigma_val;
+        speed_floor=speed_floor, max_lap_time_sec=max_lap_time_sec
     )
 
     # --- MAIN SIMULATION LOOP ---
@@ -86,10 +95,13 @@ function run_dynamic_opt_sim(frames)
         s_mod = mod(s_robot_total, path_length_m) 
         
         if current_lap > previous_lap
-            current_weights = calculate_target_weights(lap_sal_buffer, lap_pos_buffer, s_vec, npts)
+            current_weights = calculate_target_weights(
+                lap_sal_buffer, lap_pos_buffer, s_vec, npts; sigma_weight=weight_sigma
+            )
             u_initial = copy(u_opt_segments)
             u_opt_segments = optimize_lap_speeds_full_spatiotemporal_warm(
-                current_weights, q_initial, u_initial, N_segments, ds, P_in_W, alpha_val, vehicle_params, sigma_val
+                current_weights, q_initial, u_initial, N_segments, ds, P_in_W, alpha_val, vehicle_params, sigma_val;
+                speed_floor=speed_floor, max_lap_time_sec=max_lap_time_sec
             )
             empty!(lap_sal_buffer)
             empty!(lap_pos_buffer)
@@ -198,7 +210,9 @@ function run_dynamic_const_sim(frames)
 
         if current_lap > previous_lap
             # Update weights purely for logging and fair evaluation (doesn't affect speed)
-            current_weights = calculate_target_weights(lap_sal_buffer, lap_pos_buffer, s_vec, npts)
+            current_weights = calculate_target_weights(
+                lap_sal_buffer, lap_pos_buffer, s_vec, npts; sigma_weight=weight_sigma
+            )
             empty!(lap_sal_buffer)
             empty!(lap_pos_buffer)
             previous_lap = current_lap

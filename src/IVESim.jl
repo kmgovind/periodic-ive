@@ -7,12 +7,13 @@ using Ipopt, JuMP, ..Clarity
 export optimize_lap_speeds_full_spatiotemporal, optimize_lap_speeds_full_spatiotemporal_warm, get_2d_position
 
 function optimize_lap_speeds_full_spatiotemporal_warm(
-    weights, q_initial, u_initial, N, ds, P_in_W_avg, alpha_decay, vehicle_params, sigma_val
+    weights, q_initial, u_initial, N, ds, P_in_W_avg, alpha_decay, vehicle_params, sigma_val;
+    speed_floor=0.5, speed_ceiling=5.0, max_lap_time_sec=nothing
 )
 
     model = Model(Ipopt.Optimizer)
     
-    # set_silent(model)
+    set_silent(model)
 
     set_attribute(model, "tol", 1e-4)
     set_attribute(model, "acceptable_tol", 1e-3)
@@ -35,8 +36,8 @@ function optimize_lap_speeds_full_spatiotemporal_warm(
     end
     
     # --- PHYSICAL TIME BOUNDS (Change of Variables!) ---
-    safe_u_min = max(0.5, vehicle_params.u_min) 
-    safe_u_max = 5.0 
+    safe_u_min = max(speed_floor, vehicle_params.u_min)
+    safe_u_max = speed_ceiling
     
     dt_min = ds / safe_u_max
     dt_max = ds / safe_u_min
@@ -49,6 +50,16 @@ function optimize_lap_speeds_full_spatiotemporal_warm(
     
     # T_lap is now a purely linear sum
     @expression(model, T_lap, sum(dt_var[k] for k in 1:N))
+
+    # Target weights are refreshed after a completed traversal.  Bound the
+    # traversal time directly so the optimizer cannot indefinitely defer that
+    # measurement update; `speed_floor` remains only a numerical safeguard.
+    if !isnothing(max_lap_time_sec)
+        max_lap_time_sec >= N * dt_min || error(
+            "max_lap_time_sec is infeasible for the requested speed_ceiling"
+        )
+        @constraint(model, T_lap <= max_lap_time_sec)
+    end
     
     @variable(model, 0 <= q[1:N, 1:N+1] <= 1.0, start=0.5)
     @variable(model, node_clarity[1:N] >= 0)
@@ -110,7 +121,7 @@ function optimize_lap_speeds_full_spatiotemporal_warm(
     optimize!(model)
     
     if termination_status(model) in [MOI.LOCALLY_SOLVED, MOI.OPTIMAL, MOI.ALMOST_LOCALLY_SOLVED]
-        println("Success! Speeds optimized.")
+        println("Success! Speeds optimized. Lap time: ", round(value(T_lap) / 3600; digits=2), " h")
         return [ds / v for v in value.(dt_var)] 
     else
         println("Warning: Optimizer failed. Status: ", termination_status(model))
@@ -119,7 +130,8 @@ function optimize_lap_speeds_full_spatiotemporal_warm(
 end
 
 function optimize_lap_speeds_full_spatiotemporal(
-    weights, q_initial, N, ds, P_in_W_avg, alpha_decay, vehicle_params, sigma_val
+    weights, q_initial, N, ds, P_in_W_avg, alpha_decay, vehicle_params, sigma_val;
+    speed_floor=0.5, speed_ceiling=5.0, max_lap_time_sec=nothing
 )
     model = Model(Ipopt.Optimizer)
     
@@ -145,8 +157,8 @@ function optimize_lap_speeds_full_spatiotemporal(
     end
     
     # --- PHYSICAL TIME BOUNDS (Change of Variables!) ---
-    safe_u_min = max(0.5, vehicle_params.u_min) 
-    safe_u_max = 5.0 
+    safe_u_min = max(speed_floor, vehicle_params.u_min)
+    safe_u_max = speed_ceiling
     
     dt_min = ds / safe_u_max
     dt_max = ds / safe_u_min
@@ -155,6 +167,16 @@ function optimize_lap_speeds_full_spatiotemporal(
     
     @NLexpression(model, u_expr[k=1:N], ds / dt_var[k])
     @expression(model, T_lap, sum(dt_var[k] for k in 1:N))
+
+    # Target weights are refreshed after a completed traversal.  Bound the
+    # traversal time directly so the optimizer cannot indefinitely defer that
+    # measurement update; `speed_floor` remains only a numerical safeguard.
+    if !isnothing(max_lap_time_sec)
+        max_lap_time_sec >= N * dt_min || error(
+            "max_lap_time_sec is infeasible for the requested speed_ceiling"
+        )
+        @constraint(model, T_lap <= max_lap_time_sec)
+    end
     
     @variable(model, 0 <= q[1:N, 1:N+1] <= 1.0, start=0.5)
     @variable(model, node_clarity[1:N] >= 0)
@@ -211,7 +233,7 @@ function optimize_lap_speeds_full_spatiotemporal(
     optimize!(model)
     
     if termination_status(model) in [MOI.LOCALLY_SOLVED, MOI.OPTIMAL, MOI.ALMOST_LOCALLY_SOLVED]
-        println("Success! Speeds optimized.")
+        println("Success! Speeds optimized. Lap time: ", round(value(T_lap) / 3600; digits=2), " h")
         return [ds / v for v in value.(dt_var)] 
     else
         println("Warning: Optimizer failed. Status: ", termination_status(model))
