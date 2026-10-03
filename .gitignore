@@ -22,5 +22,14 @@ bk_files/
 *.pdf
 logs/
 
+# Chesapeake Bay data and regenerated experiment outputs. They are deliberately
+# kept outside Git because the NOAA NetCDF archive is several gigabytes and the
+# result archives are reproducible from the scripts documented in the README.
+chesapeake_bay/datafiles/
+chesapeake_bay/sigma_comparison/
+chesapeake_bay/max_lap_time_sweep/
+chesapeake_bay/snapshots_daily_start/
+chesapeake_bay/temp_figs/
+
 # Julia project files
 Manifest*.toml

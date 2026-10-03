@@ -24,9 +24,9 @@ P_in_W_avg = 750.0 # W; matches the Chesapeake Bay paper setup
 # Target-map and traversal-refresh settings. Target weights are estimated from
 # measurements buffered over one completed lap, so max_lap_time_sec bounds how
 # long newly acquired measurements can wait before affecting the next plan.
-weight_sigma = 2.0 # PSU
+weight_sigma = 3.5 # PSU
 speed_floor = 0.00 # m/s; numerical guard only
-max_lap_time_sec = 24 * 3600.0 # 24 h; at least two target-map updates in a 5-day run
+max_lap_time_sec = 100 * 3600.0 # 24 h; at least two target-map updates in a 5-day run
 
 # ==============================================================================
 # 1. OPTIMIZED VARIABLE-SPEED SIMULATION
